@@ -1,10 +1,9 @@
 use async_std::{sync::Arc, task};
-use async_tungstenite::async_std::connect_async;
+use async_tungstenite::async_std::connect_async_with_config;
 use futures::future::{self, AbortHandle};
 use log::debug;
 
-type BoxError = Box<dyn std::error::Error + Send + Sync>;
-
+mod event;
 mod session;
 mod session_state;
 mod shard_processor;
@@ -16,19 +15,34 @@ use crate::client::Client;
 use crate::error::Error;
 use crate::utils::WebsocketStream;
 
+type BoxError = Box<dyn std::error::Error + Send + Sync>;
+
 #[derive(Default)]
-pub struct Connection {}
+pub(crate) struct Connection {}
 
 impl Connection {
-  pub async fn connect(client: Arc<Client>) -> Result<WebsocketStream, BoxError> {
-    match connect_async(&client.gateway_url).await {
+  pub(crate) async fn connect(client: Arc<Client>) -> Result<WebsocketStream, BoxError> {
+    // @TODO(vy): Configurable gateway parameters.
+    match connect_async_with_config(
+      &format!("{}/?v=6&compress=zlib-stream", client.gateway_url),
+      Some(async_tungstenite::tungstenite::protocol::WebSocketConfig {
+        max_message_size: None,
+        max_frame_size: None,
+        max_send_queue: None,
+      }),
+    )
+    .await
+    {
       Ok((ws_stream, _)) => Ok(ws_stream),
-      Err(_error) => Err(Box::new(Error::GatewayConnectionError)),
+      Err(error) => {
+        dbg!(error);
+        Err(Box::new(Error::GatewayConnectionError))
+      }
     }
   }
 }
 
-pub struct Shard {
+pub(crate) struct Shard {
   id: i32,
   processor_handle: AbortHandle,
   session: Arc<Session>,
@@ -38,12 +52,12 @@ impl Shard {
   pub async fn connect(id: i32, client: Arc<Client>) -> Result<Self, BoxError> {
     let websocket = Connection::connect(client.clone()).await?;
     let session = Arc::new(Session::new());
-    let processor = ShardProcessor::new(websocket, session.clone());
+    let processor = ShardProcessor::new(client.clone(), websocket, session.clone());
     let (process, processor_handle) = future::abortable(processor.process());
 
     task::spawn(async move {
       let _ = process.await;
-      debug!("[shard] Shard #{} processor has finished.", id);
+      debug!("[shard] Shard #{} processor has finished executing.", id);
     });
 
     Ok(Self {

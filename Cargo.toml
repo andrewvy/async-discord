@@ -13,7 +13,11 @@ async-tungstenite = { version = "0.4.0", features = ["async-std-runtime", "async
 surf = "2.0.0-alpha.2"
 serde = "1.0.106"
 serde_json = "1.0.52"
-twilight-model = { git = "https://github.com/twilight-rs/twilight.git" }
+twilight-model = { git = "https://github.com/twilight-rs/twilight.git", features = ["serde-support"]}
 log = "0.4.8"
 async-trait = "0.1.30"
 async-native-tls = "0.3.0"
+flate2 = { version = "1.0.14", default-features = false, features = ["zlib"] }
+
+[dev-dependencies]
+pretty_env_logger = "0.3"

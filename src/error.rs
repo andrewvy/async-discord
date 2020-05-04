@@ -2,6 +2,7 @@
 pub enum Error {
   MessageFailed,
   GatewayConnectionError,
+  DeserializationError,
 }
 
 impl std::fmt::Display for Error {
