@@ -2,7 +2,7 @@ use std::convert::TryInto;
 use std::env::consts;
 use std::time::{Duration, Instant};
 
-use async_std::sync::Arc;
+use async_std::{sync::Arc, task};
 use async_tungstenite::tungstenite::Message as WebsocketMessage;
 use flate2::{Decompress, DecompressError, FlushDecompress};
 use futures::prelude::*;
@@ -14,12 +14,21 @@ use log::debug;
 use serde_json::json;
 use twilight_model::gateway::OpCode;
 
+use super::connection::Connection;
 use super::event::{DispatchEvent, GatewayEvent};
 use super::session::Session;
 use super::session_state::SessionState;
 
 use crate::client::Client;
-use crate::utils::WebsocketStream;
+use crate::utils::{BoxError, WebsocketStream};
+
+/*
+ * @TODO(vy): 5/3/2020
+ * - Add reconnect support.
+ * - Add graceful disconnect support.
+ * - Add resume support.
+ * - Add zlib error handling (should reconnect).
+ */
 
 const ZLIB_SUFFIX: [u8; 4] = [0x00, 0x00, 0xff, 0xff];
 const BUFFER_SIZE: usize = 16 * 1024;
@@ -102,9 +111,17 @@ impl ZlibBuffer {
 #[derive(Debug)]
 enum ProcessorAction {
   ShouldReconnect,
+  ShouldReconnectAndResume,
   ShouldResume,
   ShouldHeartbeat,
   ShouldIdentify,
+}
+
+#[derive(Debug)]
+enum ActionOrEvent<A, E> {
+  Action(A),
+  Event(E),
+  None,
 }
 
 /// Listens on the websocket events, handles any session-related events, and forwards messages upstream.
@@ -141,20 +158,22 @@ pub(crate) struct ShardProcessor {
 
   /// Discord event sequence number, will be used for resuming + heartbeats.
   seq: u64,
+
+  /// Discord session id we get from the Ready event, used for resuming.
+  session_id: Option<String>,
 }
 
 impl ShardProcessor {
-  pub(crate) fn new(
-    client: Arc<Client>,
-    websocket: WebsocketStream,
-    session: Arc<Session>,
-  ) -> Self {
+  pub(crate) async fn start(client: Arc<Client>, session: Arc<Session>) -> Result<Self, BoxError> {
+    let websocket = Connection::connect(client.clone()).await?;
     let (tx, rx) = websocket.split();
+
+    session.set_state(SessionState::Handshaking);
 
     // @TODO(vy): Configurable forward channel sizes.
     let (to_client, gateway_to_client) = channel(100);
 
-    Self {
+    Ok(Self {
       rx,
       client,
       decoder: ZlibBuffer::new(),
@@ -166,8 +185,9 @@ impl ShardProcessor {
       last_heartbeat_ack: None,
       last_heartbeat: Some(Instant::now()),
       was_heartbeat_acknowledged: true,
+      session_id: None,
       seq: 0,
-    }
+    })
   }
 
   /// The main process loop of the ShardProcessor.
@@ -180,10 +200,16 @@ impl ShardProcessor {
         self.process_processor_action(processor_action).await;
       }
 
-      if let Some(gateway_event) = self.next().await {
-        if let Some(processor_action) = self.process_gateway_event(gateway_event).await {
+      match self.next().await {
+        ActionOrEvent::Action(processor_action) => {
           self.process_processor_action(processor_action).await;
         }
+        ActionOrEvent::Event(gateway_event) => {
+          if let Some(processor_action) = self.process_gateway_event(gateway_event).await {
+            self.process_processor_action(processor_action).await;
+          }
+        }
+        _ => {}
       }
     }
   }
@@ -195,11 +221,15 @@ impl ShardProcessor {
       // Check if we should heartbeat again based on the heartbeat_interval.
       if last_heartbeat.elapsed() > interval {
         if !self.was_heartbeat_acknowledged {
-          return Some(ProcessorAction::ShouldReconnect);
+          return Some(ProcessorAction::ShouldReconnectAndResume);
         } else {
           return Some(ProcessorAction::ShouldHeartbeat);
         }
       }
+    }
+
+    if self.session.get_state() == SessionState::Handshaking {
+      return Some(ProcessorAction::ShouldIdentify);
     }
 
     None
@@ -208,39 +238,114 @@ impl ShardProcessor {
   async fn process_processor_action(&mut self, processor_action: ProcessorAction) {
     match processor_action {
       ProcessorAction::ShouldHeartbeat => {
-        let heartbeat = json!({
-          "op": OpCode::Heartbeat,
-          "d": self.seq
-        });
-
-        self.was_heartbeat_acknowledged = false;
-        self.last_heartbeat = Some(Instant::now());
-
-        if let Ok(msg) = serde_json::to_string(&heartbeat).map(WebsocketMessage::Text) {
-          let _ = self.sender.send(msg).await;
-        }
+        self.heartbeat().await;
       }
       ProcessorAction::ShouldIdentify => {
-        let identify = json!({
-          "op": OpCode::Identify,
-          "d": {
-            "token": self.client.token,
-            "properties": {
-              "$os": consts::OS,
-              "$browser": "andrewvy/async-discord",
-              "$device": "andrewvy/async-discord"
-            },
-            "guild_subscriptions": self.client.gateway_guild_subscriptions
-          }
-        });
-
-        if let Ok(msg) = serde_json::to_string(&identify).map(WebsocketMessage::Text) {
-          let _ = self.sender.send(msg).await;
-        }
+        self.identify().await;
       }
-      ProcessorAction::ShouldReconnect => {}
-      ProcessorAction::ShouldResume => {}
+      ProcessorAction::ShouldReconnectAndResume => {
+        self.reconnect().await;
+        self.resume().await;
+      }
+      ProcessorAction::ShouldReconnect => {
+        self.reconnect().await;
+      }
+      ProcessorAction::ShouldResume => {
+        self.resume().await;
+      }
     }
+  }
+
+  /// Sends a heartbeat message and does internal bookkeeping.
+  async fn heartbeat(&mut self) -> Result<(), BoxError> {
+    debug!("[processor] heartbeat()");
+
+    let heartbeat = json!({
+      "op": OpCode::Heartbeat,
+      "d": self.seq
+    });
+
+    self.was_heartbeat_acknowledged = false;
+    self.last_heartbeat = Some(Instant::now());
+
+    if let Ok(msg) = serde_json::to_string(&heartbeat).map(WebsocketMessage::Text) {
+      let _ = self.sender.send(msg).await?;
+    }
+
+    Ok(())
+  }
+
+  /// Creates a new connection to the gateway server.
+  async fn reconnect(&mut self) -> Result<(), BoxError> {
+    debug!("[processor] reconnect()");
+
+    self.session.set_state(SessionState::Disconnected);
+
+    let websocket = Connection::connect(self.client.clone()).await?;
+    let (tx, rx) = websocket.split();
+
+    self.rx = rx;
+    self.sender = tx;
+
+    self.session.set_state(SessionState::Handshaking);
+
+    Ok(())
+  }
+
+  /// Resumes a session with previously saved values (session_id + seq).
+  ///
+  /// The gateway will either respond next with a:
+  /// - Resumed (we are good to go!)
+  /// - InvalidSession (we should reset internal state, wait 1-5 seconds, and send a new Identify.)
+  async fn resume(&mut self) -> Result<(), BoxError> {
+    debug!("[processor] resume()");
+
+    self.session.set_state(SessionState::Resuming);
+
+    if let Some(session_id) = &self.session_id {
+      let resume = json!({
+        "op": OpCode::Resume,
+        "d": {
+          "token": self.client.token,
+          "session_id": session_id,
+          "seq": self.seq,
+        }
+      });
+
+      if let Ok(msg) = serde_json::to_string(&resume).map(WebsocketMessage::Text) {
+        let _ = self.sender.send(msg).await?;
+      }
+    } else {
+      debug!("[processor] Tried to resume, but had no session_id.");
+      self.identify().await?;
+    }
+
+    Ok(())
+  }
+
+  async fn identify(&mut self) -> Result<(), BoxError> {
+    debug!("[processor] identify()");
+
+    self.session.set_state(SessionState::Identifying);
+
+    let identify = json!({
+      "op": OpCode::Identify,
+      "d": {
+        "token": self.client.token,
+        "properties": {
+          "$os": consts::OS,
+          "$browser": "andrewvy/async-discord",
+          "$device": "andrewvy/async-discord"
+        },
+        "guild_subscriptions": self.client.gateway_guild_subscriptions
+      }
+    });
+
+    if let Ok(msg) = serde_json::to_string(&identify).map(WebsocketMessage::Text) {
+      let _ = self.sender.send(msg).await?;
+    }
+
+    Ok(())
   }
 
   /// Processes a gateway event, and optionally returns an action that we should act upon.
@@ -253,21 +358,37 @@ impl ShardProcessor {
         // @TODO(vy): Should check for out-of-sequence here.
         self.seq = seq;
 
+        match event.as_ref() {
+          DispatchEvent::Ready(ready) => {
+            self.session.set_state(SessionState::Connected);
+            self.session_id = Some(ready.session_id.clone());
+          }
+          _ => {}
+        }
+
         // @TODO(vy): This could fail if the queue is full.
         let _ = self.queue.send(event).await;
       }
       GatewayEvent::Hello(heartbeat_interval) => {
-        if self.session.get_state() == SessionState::Resuming {
-          self.heartbeat_interval = heartbeat_interval;
-        } else {
-          self.session.set_state(SessionState::Identifying);
-          self.heartbeat_interval = heartbeat_interval;
-          return Some(ProcessorAction::ShouldIdentify);
-        }
+        self.heartbeat_interval = heartbeat_interval;
       }
       GatewayEvent::HeartbeatAck => {
         self.last_heartbeat_ack = Some(Instant::now());
         self.was_heartbeat_acknowledged = true;
+      }
+      GatewayEvent::InvalidateSession(resumable) => {
+        task::sleep(Duration::from_secs(5)).await;
+
+        if resumable {
+          return Some(ProcessorAction::ShouldReconnectAndResume);
+        } else {
+          return Some(ProcessorAction::ShouldReconnect);
+        }
+      }
+      GatewayEvent::Heartbeat(seq) => {
+        self.seq = seq;
+
+        return Some(ProcessorAction::ShouldHeartbeat);
       }
       _ => {}
     }
@@ -275,11 +396,13 @@ impl ShardProcessor {
     None
   }
 
-  async fn next(&mut self) -> Option<GatewayEvent> {
+  async fn next(&mut self) -> ActionOrEvent<ProcessorAction, GatewayEvent> {
     let timeout = async_std::future::timeout(Duration::from_millis(100), self.rx.next());
 
     if let Ok(payload) = timeout.await {
       if let Some(Ok(msg)) = payload {
+        debug!("[processor] received ws message");
+
         match msg {
           WebsocketMessage::Text(text) => {
             let event: Option<GatewayEvent> = serde_json::from_str(&text)
@@ -293,7 +416,10 @@ impl ShardProcessor {
               })
               .ok();
 
-            return event;
+            return event
+              .map(ActionOrEvent::Event)
+              .or(Some(ActionOrEvent::None))
+              .unwrap();
           }
           WebsocketMessage::Binary(bytes) => {
             self.decoder.extend(&bytes);
@@ -314,16 +440,27 @@ impl ShardProcessor {
 
               self.decoder.clear();
 
-              return event;
+              return event
+                .map(ActionOrEvent::Event)
+                .or(Some(ActionOrEvent::None))
+                .unwrap();
             }
           }
-          WebsocketMessage::Ping(_) => return None,
-          WebsocketMessage::Pong(_) => return None,
-          WebsocketMessage::Close(_) => return None,
+          WebsocketMessage::Ping(_) => return ActionOrEvent::None,
+          WebsocketMessage::Pong(_) => return ActionOrEvent::None,
+          WebsocketMessage::Close(close_frame) => {
+            debug!("[processor] received close");
+
+            if let Some(frame) = close_frame {
+              debug!("[processor] received close frame: code={}", frame.code);
+            }
+
+            return ActionOrEvent::Action(ProcessorAction::ShouldReconnectAndResume);
+          }
         }
       }
     }
 
-    None
+    ActionOrEvent::None
   }
 }

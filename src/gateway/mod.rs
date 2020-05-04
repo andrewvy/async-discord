@@ -1,46 +1,19 @@
 use async_std::{sync::Arc, task};
-use async_tungstenite::async_std::connect_async_with_config;
 use futures::future::{self, AbortHandle};
 use log::debug;
 
+mod connection;
 mod event;
 mod session;
 mod session_state;
 mod shard_processor;
 
+use self::connection::Connection;
 use self::session::Session;
 use self::shard_processor::ShardProcessor;
 
 use crate::client::Client;
-use crate::error::Error;
-use crate::utils::WebsocketStream;
-
-type BoxError = Box<dyn std::error::Error + Send + Sync>;
-
-#[derive(Default)]
-pub(crate) struct Connection {}
-
-impl Connection {
-  pub(crate) async fn connect(client: Arc<Client>) -> Result<WebsocketStream, BoxError> {
-    // @TODO(vy): Configurable gateway parameters.
-    match connect_async_with_config(
-      &format!("{}/?v=6&compress=zlib-stream", client.gateway_url),
-      Some(async_tungstenite::tungstenite::protocol::WebSocketConfig {
-        max_message_size: None,
-        max_frame_size: None,
-        max_send_queue: None,
-      }),
-    )
-    .await
-    {
-      Ok((ws_stream, _)) => Ok(ws_stream),
-      Err(error) => {
-        dbg!(error);
-        Err(Box::new(Error::GatewayConnectionError))
-      }
-    }
-  }
-}
+use crate::utils::BoxError;
 
 pub(crate) struct Shard {
   id: i32,
@@ -50,9 +23,8 @@ pub(crate) struct Shard {
 
 impl Shard {
   pub async fn connect(id: i32, client: Arc<Client>) -> Result<Self, BoxError> {
-    let websocket = Connection::connect(client.clone()).await?;
     let session = Arc::new(Session::new());
-    let processor = ShardProcessor::new(client.clone(), websocket, session.clone());
+    let processor = ShardProcessor::start(client.clone(), session.clone()).await?;
     let (process, processor_handle) = future::abortable(processor.process());
 
     task::spawn(async move {
