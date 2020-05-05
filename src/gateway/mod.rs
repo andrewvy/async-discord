@@ -110,17 +110,19 @@ impl<State: Send + Sync + 'static> Gateway<State> {
 
   /// Processes the next event from the gateway (from all the shards.)
   pub async fn next(&mut self) -> bool {
-    let middleware = self.middleware.clone();
-    let state = self.state.clone();
-
     if let Some(event) = self.rx.next().await {
-      let next = Next {
-        next_middleware: &middleware,
-      };
-
       debug!("[gateway] Processing message through middleware stack.");
 
-      next.run(state, *event).await;
+      let state = self.state.clone();
+      let middleware = self.middleware.clone();
+
+      task::spawn(async move {
+        let next = Next {
+          next_middleware: middleware.as_slice(),
+        };
+
+        next.run(state, *event).await;
+      });
 
       true
     } else {
