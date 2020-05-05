@@ -110,7 +110,6 @@ impl ZlibBuffer {
 enum ProcessorAction {
   ShouldReconnect,
   ShouldReconnectAndResume,
-  ShouldResume,
   ShouldHeartbeat,
   ShouldIdentify,
 }
@@ -231,22 +230,20 @@ impl ShardProcessor {
   }
 
   async fn process_processor_action(&mut self, processor_action: ProcessorAction) {
+    // @TODO(vy): Handle errors.
     match processor_action {
       ProcessorAction::ShouldHeartbeat => {
-        self.heartbeat().await;
+        let _ = self.heartbeat().await;
       }
       ProcessorAction::ShouldIdentify => {
-        self.identify().await;
+        let _ = self.identify().await;
       }
       ProcessorAction::ShouldReconnectAndResume => {
-        self.reconnect().await;
-        self.resume().await;
+        let _ = self.reconnect().await;
+        let _ = self.resume().await;
       }
       ProcessorAction::ShouldReconnect => {
-        self.reconnect().await;
-      }
-      ProcessorAction::ShouldResume => {
-        self.resume().await;
+        let _ = self.reconnect().await;
       }
     }
   }

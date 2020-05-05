@@ -9,11 +9,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>
 
   let token = env::var("DISCORD_TOKEN").expect("Environment variable 'DISCORD_TOKEN' is required.");
   let client = ClientBuilder::new(token).create().await?;
-  let mut gateway = Gateway::connect(client.clone()).await?;
+  let mut gateway = Gateway::new().connect(client.clone()).await?;
 
-  while let Some(message) = gateway.next().await {
-    dbg!(message);
-  }
+  gateway.process().await;
 
   Ok(())
 }
