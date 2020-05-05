@@ -7,7 +7,7 @@ use async_tungstenite::tungstenite::Message as WebsocketMessage;
 use flate2::{Decompress, DecompressError, FlushDecompress};
 use futures::prelude::*;
 use futures::{
-  channel::mpsc::{channel, Receiver, Sender},
+  channel::mpsc::Sender,
   stream::{SplitSink, SplitStream},
 };
 use log::debug;
@@ -24,9 +24,7 @@ use crate::utils::{BoxError, WebsocketStream};
 
 /*
  * @TODO(vy): 5/3/2020
- * - Add reconnect support.
  * - Add graceful disconnect support.
- * - Add resume support.
  * - Add zlib error handling (should reconnect).
  */
 
@@ -135,9 +133,6 @@ pub(crate) struct ShardProcessor {
   /// A sender that queues any messages we want to forward from this processor to the downstream client consumer.
   queue: Sender<Box<DispatchEvent>>,
 
-  /// A receiver for the above sender, primarily used by any downstream consumers of dispatch events.
-  receiver: Receiver<Box<DispatchEvent>>,
-
   /// A sender that passes messages directly upstream through the websocket connection.
   sender: SplitSink<WebsocketStream, WebsocketMessage>,
 
@@ -164,21 +159,21 @@ pub(crate) struct ShardProcessor {
 }
 
 impl ShardProcessor {
-  pub(crate) async fn start(client: Arc<Client>, session: Arc<Session>) -> Result<Self, BoxError> {
+  pub(crate) async fn start(
+    client: Arc<Client>,
+    session: Arc<Session>,
+    gateway_to_client: Sender<Box<DispatchEvent>>,
+  ) -> Result<Self, BoxError> {
     let websocket = Connection::connect(client.clone()).await?;
     let (tx, rx) = websocket.split();
 
     session.set_state(SessionState::Handshaking);
 
-    // @TODO(vy): Configurable forward channel sizes.
-    let (to_client, gateway_to_client) = channel(100);
-
     Ok(Self {
       rx,
       client,
       decoder: ZlibBuffer::new(),
-      queue: to_client,
-      receiver: gateway_to_client,
+      queue: gateway_to_client,
       sender: tx,
       session,
       heartbeat_interval: 15_000,
