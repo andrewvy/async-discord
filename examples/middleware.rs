@@ -16,12 +16,7 @@ type State = ();
 
 #[async_trait]
 impl Middleware<State> for LogMiddleware {
-  async fn handle<'a>(
-    &'a self,
-    state: Arc<State>,
-    event: Box<DispatchEvent>,
-    next: Next<'a, State>,
-  ) {
+  async fn handle<'a>(&'a self, state: Arc<State>, event: DispatchEvent, next: Next<'a, State>) {
     info!("Received event {:?}", event);
 
     next.run(state, event).await;

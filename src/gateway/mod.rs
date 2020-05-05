@@ -120,7 +120,7 @@ impl<State: Send + Sync + 'static> Gateway<State> {
 
       debug!("[gateway] Processing message through middleware stack.");
 
-      next.run(state, event).await;
+      next.run(state, *event).await;
 
       true
     } else {
