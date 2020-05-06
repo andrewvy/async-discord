@@ -3,6 +3,10 @@ use async_trait::async_trait;
 
 use crate::gateway::event::DispatchEvent as Event;
 
+mod prefix;
+
+pub use prefix::PrefixMiddleware;
+
 #[async_trait]
 pub trait Middleware<State>: Send + Sync + 'static {
   async fn handle<'a>(&'a self, state: Arc<State>, event: Event, next: Next<'a, State>);

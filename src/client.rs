@@ -1,12 +1,13 @@
 use async_std::sync::Arc;
 
-use crate::http;
+use crate::http::{self, HttpClient};
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Client {
   pub(crate) token: String,
   pub(crate) gateway_url: String,
   pub(crate) gateway_guild_subscriptions: bool,
+  pub http: HttpClient,
 }
 
 impl Client {}
@@ -31,11 +32,13 @@ impl ClientBuilder {
   pub async fn create(&mut self) -> Result<Arc<Client>, Box<dyn std::error::Error + Send + Sync>> {
     let gateway_response = http::get_gateway::get_gateway().await?;
     let gateway_url = gateway_response.url;
+    let http = HttpClient::new(self.token.clone());
 
     let client = Arc::new(Client {
       token: self.token.to_owned(),
       gateway_url: gateway_url.into(),
       gateway_guild_subscriptions: self.gateway_guild_subscriptions,
+      http,
     });
 
     Ok(client)
