@@ -6,6 +6,8 @@ The main design goal is to make it accessible to build more complex functionalit
 
 Ideas borrowed and `twilight-model` used from [twilight-rs/twilight](https://github.com/twilight-rs/twilight).
 
+Check out our [/examples](/examples). (api subject to massive change!)
+
 ---
 
 ### Choices
