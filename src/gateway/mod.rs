@@ -17,7 +17,7 @@ use self::session_state::SessionState;
 use self::shard_processor::ShardProcessor;
 
 use crate::client::Client;
-use crate::middleware::{Middleware, Next};
+use crate::middleware::{Context, Middleware, Next};
 use crate::utils::BoxError;
 
 pub(crate) struct Shard {
@@ -111,8 +111,6 @@ impl<State: Send + Sync + 'static> Gateway<State> {
   /// Processes the next event from the gateway (from all the shards.)
   pub async fn next(&mut self) -> bool {
     if let Some(event) = self.rx.next().await {
-      debug!("[gateway] Processing message through middleware stack.");
-
       let state = self.state.clone();
       let middleware = self.middleware.clone();
 
@@ -121,7 +119,7 @@ impl<State: Send + Sync + 'static> Gateway<State> {
           next_middleware: middleware.as_slice(),
         };
 
-        next.run(state, *event).await;
+        next.run(state, Context::new(*event)).await;
       });
 
       true

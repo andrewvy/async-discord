@@ -3,13 +3,15 @@ use async_trait::async_trait;
 
 use crate::gateway::event::DispatchEvent as Event;
 
+mod context;
 mod prefix;
 
+pub use context::Context;
 pub use prefix::PrefixMiddleware;
 
 #[async_trait]
 pub trait Middleware<State>: Send + Sync + 'static {
-  async fn handle<'a>(&'a self, state: Arc<State>, event: Event, next: Next<'a, State>);
+  async fn handle<'a>(&'a self, state: Arc<State>, ctx: Context<Event>, next: Next<'a, State>);
 }
 
 pub struct Next<'a, State> {
@@ -17,7 +19,7 @@ pub struct Next<'a, State> {
 }
 
 impl<'a, State: 'static> Next<'a, State> {
-  pub async fn run(mut self, state: Arc<State>, event: Event) {
+  pub async fn run(mut self, state: Arc<State>, event: Context<Event>) {
     if let Some((current, next)) = self.next_middleware.split_first() {
       self.next_middleware = next;
       current.handle(state, event, self).await;

@@ -5,11 +5,9 @@ use async_discord::client::{Client, ClientBuilder};
 use async_discord::gateway::event::DispatchEvent;
 use async_discord::gateway::Gateway;
 use async_discord::http::channel::create_message::{CreateMessage, CreateMessageFields};
-use async_discord::middleware::{Middleware, Next, PrefixMiddleware};
+use async_discord::middleware::{Context, Middleware, Next, PrefixMiddleware};
 
 use async_trait::async_trait;
-
-use log::info;
 
 pub struct PingCommand {}
 
@@ -19,8 +17,13 @@ pub struct State {
 
 #[async_trait]
 impl Middleware<State> for PingCommand {
-  async fn handle<'a>(&'a self, state: Arc<State>, event: DispatchEvent, next: Next<'a, State>) {
-    match event {
+  async fn handle<'a>(
+    &'a self,
+    state: Arc<State>,
+    ctx: Context<DispatchEvent>,
+    next: Next<'a, State>,
+  ) {
+    match ctx.event {
       DispatchEvent::MessageCreate(ref msg) => {
         let fields = CreateMessageFields {
           content: "Pong!".to_string(),
@@ -30,13 +33,12 @@ impl Middleware<State> for PingCommand {
         };
 
         let msg = CreateMessage::new(&state.client.http, msg.channel_id, fields);
-
-        msg.execute().await;
+        let _ = msg.execute().await;
       }
       _ => {}
     }
 
-    next.run(state, event).await;
+    next.run(state, ctx).await;
   }
 }
 
