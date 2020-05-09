@@ -4,7 +4,7 @@ use std::sync::Arc;
 use async_discord::client::ClientBuilder;
 use async_discord::gateway::event::DispatchEvent;
 use async_discord::gateway::Gateway;
-use async_discord::middleware::{Middleware, Next};
+use async_discord::middleware::{Context, Middleware, Next};
 
 use async_trait::async_trait;
 
@@ -16,10 +16,15 @@ type State = ();
 
 #[async_trait]
 impl Middleware<State> for LogMiddleware {
-  async fn handle<'a>(&'a self, state: Arc<State>, event: DispatchEvent, next: Next<'a, State>) {
-    info!("Received event {:?}", event);
+  async fn handle<'a>(
+    &'a self,
+    state: Arc<State>,
+    ctx: Context<DispatchEvent>,
+    next: Next<'a, State>,
+  ) {
+    info!("Received event {:?}", ctx.event);
 
-    next.run(state, event).await;
+    next.run(state, ctx).await;
   }
 }
 
