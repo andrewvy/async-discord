@@ -1,10 +1,7 @@
 use std::env;
 use std::sync::Arc;
 
-use async_discord::client::ClientBuilder;
-use async_discord::gateway::event::DispatchEvent;
-use async_discord::gateway::Gateway;
-use async_discord::middleware::{Context, Middleware, Next};
+use async_discord::{ClientBuilder, Context, DispatchEvent, Gateway, Middleware, Next};
 
 use async_trait::async_trait;
 
