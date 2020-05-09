@@ -34,9 +34,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>
 
   let token = env::var("DISCORD_TOKEN").expect("Environment variable 'DISCORD_TOKEN' is required.");
   let client = ClientBuilder::new(token).create().await?;
-  let mut gateway = Gateway::new()
+  let mut gateway = Gateway::new(client.clone())
     .middleware(LogMiddleware {})
-    .connect(client.clone())
+    .connect()
     .await?;
 
   gateway.process().await;

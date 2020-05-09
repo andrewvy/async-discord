@@ -59,19 +59,20 @@ pub struct Gateway<State> {
   rx: Receiver<Box<DispatchEvent>>,
   state: Arc<State>,
   middleware: Arc<Vec<Arc<dyn Middleware<State>>>>,
+  client: Arc<Client>,
 }
 
 const GATEWAY_CHANNEL_SIZE: usize = 100;
 
 impl Gateway<()> {
   /// Create a new [`Gateway`].
-  pub fn new() -> Gateway<()> {
-    Self::with_state(())
+  pub fn new(client: Arc<Client>) -> Gateway<()> {
+    Self::with_state(client, ())
   }
 }
 
 impl<State: Send + Sync + 'static> Gateway<State> {
-  pub fn with_state(state: State) -> Gateway<State> {
+  pub fn with_state(client: Arc<Client>, state: State) -> Gateway<State> {
     let (tx, rx) = channel(GATEWAY_CHANNEL_SIZE);
 
     Self {
@@ -80,6 +81,7 @@ impl<State: Send + Sync + 'static> Gateway<State> {
       rx,
       state: Arc::new(state),
       middleware: Arc::new(vec![]),
+      client,
     }
   }
 
@@ -94,12 +96,12 @@ impl<State: Send + Sync + 'static> Gateway<State> {
   }
 
   /// Given a [`Client`] for configuration, connects to the gateway.
-  pub async fn connect(mut self, client: Arc<Client>) -> Result<Self, BoxError> {
+  pub async fn connect(mut self) -> Result<Self, BoxError> {
     let number_of_shards = 1;
     let mut shards = Vec::with_capacity(number_of_shards);
 
     for idx in 0..number_of_shards {
-      let shard = Shard::connect(idx as i32, client.clone(), self.tx.clone()).await?;
+      let shard = Shard::connect(idx as i32, self.client.clone(), self.tx.clone()).await?;
       shards.push(shard);
     }
 
@@ -113,13 +115,14 @@ impl<State: Send + Sync + 'static> Gateway<State> {
     if let Some(event) = self.rx.next().await {
       let state = self.state.clone();
       let middleware = self.middleware.clone();
+      let client = self.client.clone();
 
       task::spawn(async move {
         let next = Next {
           next_middleware: middleware.as_slice(),
         };
 
-        next.run(state, Context::new(*event)).await;
+        next.run(state, Context::new(client, *event)).await;
       });
 
       true

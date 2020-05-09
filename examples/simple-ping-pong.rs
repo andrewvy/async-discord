@@ -11,9 +11,7 @@ use async_trait::async_trait;
 
 pub struct PingCommand {}
 
-pub struct State {
-  client: Arc<Client>,
-}
+pub type State = ();
 
 #[async_trait]
 impl Middleware<State> for PingCommand {
@@ -32,7 +30,7 @@ impl Middleware<State> for PingCommand {
           embed: None,
         };
 
-        let msg = CreateMessage::new(&state.client.http, msg.channel_id, fields);
+        let msg = CreateMessage::new(&ctx.client.http, msg.channel_id, fields);
         let _ = msg.execute().await;
       }
       _ => {}
@@ -48,13 +46,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>
 
   let token = env::var("DISCORD_TOKEN").expect("Environment variable 'DISCORD_TOKEN' is required.");
   let client = ClientBuilder::new(token).create().await?;
-  let mut gateway = Gateway::with_state(State {
-    client: client.clone(),
-  })
-  .middleware(PrefixMiddleware::new("~ping"))
-  .middleware(PingCommand {})
-  .connect(client.clone())
-  .await?;
+  let mut gateway = Gateway::new(client.clone())
+    .middleware(PrefixMiddleware::new("~ping"))
+    .middleware(PingCommand {})
+    .connect()
+    .await?;
 
   gateway.process().await;
 
