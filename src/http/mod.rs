@@ -1,8 +1,13 @@
+use std::hash::Hash;
+
 use http_client::native::NativeClient;
 use surf::{Client as SurfClient, Request};
 
 pub mod channel;
 pub mod get_gateway;
+
+#[derive(Hash, Eq, PartialEq, Debug)]
+pub struct Key(String);
 
 #[derive(Debug)]
 pub struct HttpClient {

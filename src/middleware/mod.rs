@@ -3,9 +3,11 @@ use async_trait::async_trait;
 
 use crate::gateway::event::DispatchEvent as Event;
 
+mod cache;
 mod context;
 mod prefix;
 
+pub use cache::Cache;
 pub use context::Context;
 pub use prefix::PrefixMiddleware;
 

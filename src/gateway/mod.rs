@@ -16,6 +16,7 @@ use self::session::Session;
 use self::session_state::SessionState;
 use self::shard_processor::ShardProcessor;
 
+use crate::cache::Cache;
 use crate::client::Client;
 use crate::middleware::{Context, Middleware, Next};
 use crate::utils::BoxError;
@@ -60,6 +61,7 @@ pub struct Gateway<State> {
   state: Arc<State>,
   middleware: Arc<Vec<Arc<dyn Middleware<State>>>>,
   client: Arc<Client>,
+  cache: Arc<Cache>,
 }
 
 const GATEWAY_CHANNEL_SIZE: usize = 100;
@@ -74,6 +76,7 @@ impl Gateway<()> {
 impl<State: Send + Sync + 'static> Gateway<State> {
   pub fn with_state(client: Arc<Client>, state: State) -> Gateway<State> {
     let (tx, rx) = channel(GATEWAY_CHANNEL_SIZE);
+    let cache = Arc::new(Cache::new());
 
     Self {
       shards: Vec::default(),
@@ -82,6 +85,7 @@ impl<State: Send + Sync + 'static> Gateway<State> {
       state: Arc::new(state),
       middleware: Arc::new(vec![]),
       client,
+      cache,
     }
   }
 
@@ -116,13 +120,14 @@ impl<State: Send + Sync + 'static> Gateway<State> {
       let state = self.state.clone();
       let middleware = self.middleware.clone();
       let client = self.client.clone();
+      let cache = self.cache.clone();
 
       task::spawn(async move {
         let next = Next {
           next_middleware: middleware.as_slice(),
         };
 
-        next.run(state, Context::new(client, *event)).await;
+        next.run(state, Context::new(client, cache, *event)).await;
       });
 
       true
