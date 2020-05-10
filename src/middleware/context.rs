@@ -1,4 +1,6 @@
-use std::sync::Arc;
+use async_std::sync::{Arc, RwLock};
+
+use typemap::{ShareMap, TypeMap};
 
 use crate::cache::Cache;
 use crate::client::Client;
@@ -11,6 +13,7 @@ pub struct Context<Event> {
   pub event: Event,
   pub client: Arc<Client>,
   pub cache: Arc<Cache>,
+  local: Arc<RwLock<ShareMap>>,
 }
 
 impl<Event> Context<Event> {
@@ -19,6 +22,11 @@ impl<Event> Context<Event> {
       client,
       event,
       cache,
+      local: Arc::new(RwLock::new(TypeMap::custom())),
     }
+  }
+
+  pub fn local(&self) -> Arc<RwLock<ShareMap>> {
+    self.local.clone()
   }
 }

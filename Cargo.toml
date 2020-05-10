@@ -19,6 +19,7 @@ async-trait = "0.1.30"
 async-native-tls = "0.3.0"
 flate2 = { version = "1.0.14", default-features = false, features = ["zlib"] }
 http-client = "2.0.0"
+typemap = "0.3.3"
 
 [dev-dependencies]
 pretty_env_logger = "0.3"
