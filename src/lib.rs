@@ -5,6 +5,7 @@ pub mod gateway;
 pub mod http;
 pub mod middleware;
 pub mod utils;
+pub mod interceptors;
 
 pub use client::{Client, ClientBuilder};
 pub use gateway::{event::DispatchEvent, event::GatewayEvent, Gateway};

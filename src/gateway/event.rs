@@ -12,6 +12,7 @@ use serde_json::Value;
 use twilight_model::gateway::{payload::*, OpCode};
 
 use crate::error::Error;
+use crate::interceptors::Interceptor;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -262,4 +263,9 @@ impl<'de> Deserialize<'de> for GatewayEvent {
 
     deserializer.deserialize_struct("GatewayEvent", FIELDS, GatewayEventVisitor)
   }
+}
+
+#[derive(Debug)]
+pub enum GatewayAction {
+  AddInterceptor(Interceptor),
 }
